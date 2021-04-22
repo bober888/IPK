@@ -10,11 +10,15 @@
 #include <iostream>
 #include <string>
 #include <bits/stdc++.h>
-
+#include <pcap/pcap.h>
 /*
 * Errors
 */
-#define INVALIDARGUMENTS 10;
+#define SNIFFING_DEV_ERR 11;
+#define INVALID_ARGUMENTS 10;
+#define PCAP_FINDALLDEVS_ERR 9;
+#define INVALID_FETCH 8;
+#define ERROR_FILTER_COMPILE 7;
 
 /*
 *   Struct for date from arguments
@@ -45,6 +49,88 @@ bool isNum(std::string str) {
         }
     }
     return true;
+}
+
+/*
+*   Function for filtr compiling
+*/
+int compileFilter (pcap_t *sniffer, struct arguments arg, bpf_u_int32 ipAdr) {
+    char *filter;
+    bool stdFlag = arg.udp && arg.tcp && arg.icmp && arg.arp && arg.portFlag;   //If all true = stdFlag true
+    std::vector<std::string> f;     //Vector for generating final string
+    std::string fil = "";           
+    bool filterReady = false;      //Flag if filter string is complited
+    
+    //Filter generating
+    if (stdFlag) {      
+        filter = &arg.port[0];
+        filterReady = true;
+    } else {
+        if (arg.udp) {
+            f.push_back("udp");
+        }
+
+        if (arg.tcp) {
+            f.push_back("tcp");
+        }
+
+        if (arg.icmp) {
+            f.push_back("icmp");
+        }
+
+        if (arg.arp) {
+            f.push_back("arp");
+        }
+        
+        if (arg.portFlag){      
+            if (f.empty()) {                //If in arguments only port
+                filter = &arg.port[0];
+                filterReady = true;
+            }
+            f.push_back(arg.port);
+        }
+
+        if (f.empty()) {            //If noone parametr wasnt set
+            fil = "udp or tcp or icmp or arp";
+            filter = &fil[0];
+        }
+    }
+    
+    if (!filterReady && arg.portFlag) {     //Final string must start with ( if port is set
+        fil = "(";
+    }
+
+    for (std::vector<std::string>::const_iterator i = f.begin(); i != f.end(); ++i) {       //Loop for generating string from vector params
+        fil += *i;
+        std::vector<std::string>::const_iterator elem = i;
+        elem++;
+
+        if (elem != f.end()) {  //If not the last element
+            elem++;
+            if (!(elem == f.end() && arg.portFlag)) {   //If not the last element and the next isnt port
+                fil += " or ";
+            } else if (elem == f.end() && arg.portFlag) {   //If the next elem is last and its port
+                fil += ") and ";
+            }
+        }
+    }
+    
+    if (!filterReady) {    //Check if filtr wasnt set, than copy string to char due to pcap_compile parametr
+        filter = &fil[0];
+    }
+
+    struct bpf_program fp;
+    if (pcap_compile(sniffer, &fp, filter, 0, ipAdr) == -1) {
+        std::cerr << "Fail in filter compile" << std::endl;
+        return ERROR_FILTER_COMPILE;
+    }
+
+    if (pcap_setfilter(sniffer, &fp) == -1) {
+        std::cerr << "Fail in filter compile" << std::endl;
+        return ERROR_FILTER_COMPILE;
+    }
+
+    return 0;
 }
 
 /*
@@ -143,8 +229,8 @@ struct arguments argparse(int argc, char *argv[]) {
                 arg.invalidArguments = true;
                 return arg;
             }
-            
-            arg.port = argv[i];
+            arg.port = "port ";
+            arg.port += argv[i];
             arg.portFlag = true;
 
         } else {
@@ -161,13 +247,52 @@ struct arguments argparse(int argc, char *argv[]) {
 */
 int main(int argc, char *argv[]) {
     struct arguments arg = argparse(argc, argv);
+    char errbuf[PCAP_ERRBUF_SIZE]; //String for error messages
+
 
     //Checks if agruments was correct
     if (arg.invalidArguments) {
-        return INVALIDARGUMENTS;
+        std::cerr << "Invalid arguments" << errbuf << std::endl;
+        return INVALID_ARGUMENTS;
     }
-    std::cout << "Argument ok" << std::endl;
 
-    
+    std::cout << "Argument ok" << std::endl;
+    //If -i wasn`t in arguments or -i was without interfaces
+    if (arg.interface.empty()){
+        pcap_if_t *allDevs, *dList;
+
+        //Control if devises ok
+        if (pcap_findalldevs(&allDevs, errbuf) == -1) {
+            std::cerr << "Error in pcap_findalldevs" << errbuf << std::endl;
+            return PCAP_FINDALLDEVS_ERR;
+        }
+
+        for (dList = allDevs; dList != NULL; dList = dList->next) {
+            std::cout << dList->name << std::endl;
+        }
+
+        return 0;
+    }
+
+    bpf_u_int32 subMask, ipAdr;     //Submask and ip adress 
+    char *interface = &arg.interface[0];
+   
+    //Fetch ip adress and subMask
+    if(pcap_lookupnet(interface, &ipAdr, &subMask, errbuf) == -1) {
+        std::cerr << "Immpossible to fetch ip adress or sub mask" << std::endl;
+        return INVALID_FETCH;
+    }
+
+    //Sniffing devices
+    pcap_t *sniffer = pcap_open_live(interface, BUFSIZ, 0, 1024, errbuf);
+    if (sniffer == nullptr) {
+        std::cerr << "Open device was failed, error message: " << errbuf << std::endl;
+        return INVALID_FETCH;
+    }
+    struct bpf_program fp;
+    if (compileFilter(sniffer, arg, ipAdr) != 0){
+        return ERROR_FILTER_COMPILE;
+    }
+
     return 0;
 }
