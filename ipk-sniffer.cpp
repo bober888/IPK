@@ -364,6 +364,10 @@ void handler (u_char *args, const struct pcap_pkthdr *pcapPk, const u_char* buff
         case 17: //UDP
             std::cout <<"udp" << std::endl;
             printUdp(buffer, ip6);
+            std::cout << pcapPk->len << " <len buffe> " << buffer << std::endl;
+            for (int i = 0; i < int(pcapPk->len); i++) {
+                fprintf(stdout, "%02x%s", buffer[i], ( i + 1 ) % 16 == 0 ? "\r\n" : " ");
+            }
         break;
         default: //ACP
             std::cout <<"acp" << std::endl;
