@@ -11,6 +11,19 @@
 #include <string>
 #include <bits/stdc++.h>
 #include <pcap/pcap.h>
+#include <signal.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netinet/ip_icmp.h>   //Provides declarations for icmp header
+#include <netinet/udp.h>        //Provides declarations for udp header
+#include <netinet/tcp.h>         //Provides declarations for tcp header
+#include <netinet/ip.h>         //Provides declarations for ip header
+#include <netinet/ip6.h>         //Provides declarations for ip6 header
+#include <sys/socket.h>
+#include <netdb.h>
+#include <netinet/if_ether.h>  //For ETH_P_ALL
+#include <net/ethernet.h>       //For ether_header
+
 /*
 * Errors
 */
@@ -221,6 +234,10 @@ struct arguments argparse(int argc, char *argv[]) {
             }
 
             arg.packetCount = std::stoi(number);
+            if (arg.packetCount < 0 ) {
+                arg.invalidArguments = true;
+                return arg;
+            }
             arg.n = true;
 
         } else if (argument == "-p") {
@@ -241,7 +258,120 @@ struct arguments argparse(int argc, char *argv[]) {
 
     return arg;
 }
+/*
+Function which returns ip of host
+*/
+std::string hostName(struct in_addr ip_addr) {
+    char ip[1025];
+    char node[1025];
 
+    strcpy(ip, inet_ntoa(ip_addr));
+
+
+    struct sockaddr_in sa;
+	
+	memset(&sa, 0, sizeof sa);
+	sa.sin_family = AF_INET;
+	 
+	inet_pton(AF_INET, ip, &sa.sin_addr);
+ 
+	int res = getnameinfo((struct sockaddr*)&sa, sizeof(sa),
+						  node, sizeof(node),
+						  NULL, 0, NI_NAMEREQD);
+
+    if (res) {
+        std::string s1 = ip;
+        return s1;
+    } else {
+        std::string s1 = node;
+        return s1;
+    }
+}
+/*
+Function which returns ip of ipv6 host
+*/
+std::string hostNameIpv6(struct in6_addr ip_addr) {
+    char ip[1025];
+    char node[1025];
+    inet_ntop(AF_INET6, &ip_addr, ip, 1025);
+    struct sockaddr_in6 sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sin6_family = AF_INET6;
+
+    inet_pton(AF_INET6, ip, &sa.sin6_addr);
+
+    int s = getnameinfo((struct sockaddr *)&sa, sizeof(sa), node, sizeof(node), NULL, 0, NI_NAMEREQD);
+
+    if (s) {
+        std::string ip1 = ip;
+        return ip1;
+    } else {
+        std::string ip1 = node;
+        return ip1;
+    }
+}
+
+/*
+Function to print udp packet
+*/
+void printUdp(const u_char *buffer, bool ip6) {
+    std::cout << "/////////////////////////////////////UDP/////////////////////////////////////" << std::endl;
+    unsigned short headerLen = 0;
+    std::string srcIp, destIp;
+    if (ip6) {
+        struct ip6_hdr *iph = (struct ip6_hdr *)(buffer + sizeof(struct ether_header));
+        srcIp = hostNameIpv6(iph->ip6_src);
+        destIp = hostNameIpv6(iph->ip6_dst);
+        headerLen = 40;
+    } else {
+        struct ip *iph = (struct ip *)(buffer + sizeof(struct ether_header));
+        headerLen = iph->ip_hl * 4;
+        srcIp = hostName(iph->ip_src);
+        destIp = hostName(iph->ip_dst);
+    }
+    std::cout << srcIp << " <src  dest> " << destIp << std::endl;
+
+    struct udphdr *udphd = (struct udphdr*)(buffer + headerLen + sizeof(struct ether_header));
+    int udphdrLen =  sizeof(struct ether_header) + headerLen + sizeof(udphd);
+    std::cout << ntohs(udphd->uh_sport) << " " << ntohs(udphd->uh_dport) << " " << udphd->len << std::endl;
+}
+
+/*
+Callback function for pap_loop
+*/
+void handler (u_char *args, const struct pcap_pkthdr *pcapPk, const u_char* buffer) {
+    struct ether_header *ethH = (struct ether_header *) buffer;
+    std::cout <<"handle" << std::endl;
+    int switchNum = 0;
+    bool ip6 = false;
+    struct iphdr *iph = (struct iphdr*)(buffer + sizeof(struct ethhdr));
+    struct ether_header *etherH = (struct ether_header *) buffer;
+    if (ntohs(etherH->ether_type) == ETHERTYPE_IPV6) {     // if ETHERTYPE is IPV6, flag is set to true
+        struct ip6_hdr *iph = (struct ip6_hdr *)(buffer + sizeof(struct ether_header));
+		switchNum = iph->ip6_ctlun.ip6_un1.ip6_un1_nxt;
+        ip6 = true;
+    } else {
+        struct iphdr *iph = (struct iphdr*)(buffer + sizeof(struct ethhdr));
+        switchNum = iph->protocol;
+    }
+    switch (iph->protocol) {
+        case 1: //ICMP
+            std::cout <<"icmp" << std::endl;
+        break;
+        case 6: //TCP
+            std::cout <<"tcp" << std::endl;
+        break;
+        case 17: //UDP
+            std::cout <<"udp" << std::endl;
+            printUdp(buffer, ip6);
+        break;
+        default: //ACP
+            std::cout <<"acp" << std::endl;
+
+        break;
+    }
+
+}
 /*
 *   Main program
 */
@@ -293,6 +423,8 @@ int main(int argc, char *argv[]) {
     if (compileFilter(sniffer, arg, ipAdr) != 0){
         return ERROR_FILTER_COMPILE;
     }
+
+    pcap_loop(sniffer, arg.packetCount, handler, NULL);
 
     return 0;
 }
