@@ -23,6 +23,7 @@
 #include <netdb.h>
 #include <netinet/if_ether.h>  //For ETH_P_ALL
 #include <net/ethernet.h>       //For ether_header
+#include <time.h>
 
 /*
 * Errors
@@ -315,7 +316,6 @@ std::string hostNameIpv6(struct in6_addr ip_addr) {
 Function to print udp packet
 */
 void printUdp(const u_char *buffer, bool ip6) {
-    std::cout << "/////////////////////////////////////UDP/////////////////////////////////////" << std::endl;
     unsigned short headerLen = 0;
     std::string srcIp, destIp;
     if (ip6) {
@@ -329,11 +329,9 @@ void printUdp(const u_char *buffer, bool ip6) {
         srcIp = hostName(iph->ip_src);
         destIp = hostName(iph->ip_dst);
     }
-    std::cout << srcIp << " <src  dest> " << destIp << std::endl;
-
     struct udphdr *udphd = (struct udphdr*)(buffer + headerLen + sizeof(struct ether_header));
     int udphdrLen =  sizeof(struct ether_header) + headerLen + sizeof(udphd);
-    std::cout << ntohs(udphd->uh_sport) << " " << ntohs(udphd->uh_dport) << " " << udphd->len << std::endl;
+    std::cout << srcIp << " : " << ntohs(udphd->uh_sport) << " > " << destIp << " : " << ntohs(udphd->uh_dport) << ", ";
 }
 
 /*
@@ -342,10 +340,19 @@ Callback function for pap_loop
 void handler (u_char *args, const struct pcap_pkthdr *pcapPk, const u_char* buffer) {
     struct ether_header *ethH = (struct ether_header *) buffer;
     std::cout <<"handle" << std::endl;
+
     int switchNum = 0;
     bool ip6 = false;
+
     struct iphdr *iph = (struct iphdr*)(buffer + sizeof(struct ethhdr));
     struct ether_header *etherH = (struct ether_header *) buffer;
+
+    char time[32];
+    size_t len = strftime(time, sizeof(time), "%FT%T%z", localtime(&pcapPk->ts.tv_sec));
+    char time1[] = {time[len - 2], time[len - 1], '\0' };
+    sprintf(time + len - 2, ":%s", time1); 
+    std::cout << time << " ";
+
     if (ntohs(etherH->ether_type) == ETHERTYPE_IPV6) {     // if ETHERTYPE is IPV6, flag is set to true
         struct ip6_hdr *iph = (struct ip6_hdr *)(buffer + sizeof(struct ether_header));
 		switchNum = iph->ip6_ctlun.ip6_un1.ip6_un1_nxt;
@@ -362,12 +369,8 @@ void handler (u_char *args, const struct pcap_pkthdr *pcapPk, const u_char* buff
             std::cout <<"tcp" << std::endl;
         break;
         case 17: //UDP
-            std::cout <<"udp" << std::endl;
             printUdp(buffer, ip6);
-            std::cout << pcapPk->len << " <len buffe> " << buffer << std::endl;
-            for (int i = 0; i < int(pcapPk->len); i++) {
-                fprintf(stdout, "%02x%s", buffer[i], ( i + 1 ) % 16 == 0 ? "\r\n" : " ");
-            }
+            
         break;
         default: //ACP
             std::cout <<"acp" << std::endl;
@@ -375,6 +378,35 @@ void handler (u_char *args, const struct pcap_pkthdr *pcapPk, const u_char* buff
         break;
     }
 
+    std::cout << "lenght " << int(pcapPk->len) << " bytes" << std::endl;
+
+    int i;
+    for (i = 0; i < int(pcapPk->len); i++) {
+        printf("%02x ", buffer[i]);     //Using prinf here to convert byte
+        if ((i + 1) % 16 == 0) {
+            for (int j = i - 15; j != i + 1; j++) {
+                if (buffer[j] > 127 || buffer[j] < 33){
+                    std::cout << ".";
+                } else {
+                    printf("%c", buffer[j]);      //Using prinf here to convert byte
+                }
+            }
+            std::cout << std::endl;
+        }
+    }
+
+    for (int j = i; j % 16 != 0 ;j++) {
+        std::cout << "   ";
+    }
+
+    for (int j = i - ((i + 1) % 16) + 1; j <= i - 1; j++) {
+        if (buffer[j] > 127 || buffer[j] < 33){
+            std::cout << ".";
+        } else {
+            printf("%c", buffer[j]);      //Using prinf here to convert byte
+        }
+    }
+    std::cout << std::endl;
 }
 /*
 *   Main program
